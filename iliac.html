@@ -1,0 +1,205 @@
+<html>
+<head>
+  <title>Illiac Suite</title>
+  <!-- includes the vue framework from a CDN, rather than storing locally -->
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.6.11"></script>
+  <meta name="author" content="Jon Myers">
+</head>
+<body>
+  <div id="app">
+    <button v-on:click="changePlayState" >{{['Play', 'Stop'][playState]}}</button>
+    <p><input type="checkbox" v-model:checked="ruleOneState"
+      v-on:click="updateRule"> Rule 1&mdash;"No melodic line may span more than an
+      octave"</p>
+    <p><input type="checkbox" v-model:checked="ruleFourState"> Rule 4&mdash;"A melodic
+       skip of a major or minor seventh is forbidden because this is a
+       dissonant<sup>*</sup> melodic interval"</p>
+    <p><input type="checkbox" v-model:checked="ruleFiveState"> Rule 5&mdash;"Any
+      melodic skip, i.e., a melodic movement of a minor third or more, must be
+      followed by a tone repeat or by a stepwise motion with or without a change
+       in direction. A stepwise motion is a minor or major second."</p>
+    <p><input type="checkbox" v-model:checked="ruleSixState">
+      Rule 6&mdash;"No more than one successive repeat of a given note is permitted."</p>
+    <p></p>
+    <p></p>
+    <p></p>
+    <p></p>
+    <p></p>
+    <p><sup>*</sup>According to one historical interpretation of the concept of
+      consonance/dissonance.
+  </div>
+
+  <script>
+  // for cross-browser compatibility
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+
+  // because why not?
+  const tuningFrequency = 432;
+
+  // the vue instance
+  const app = new Vue({
+    el: '#app',
+    data: {
+      adsr: {
+      // attack, decay, and release durations
+      durations: [0.05, 0.1, 0.05],
+      // full level and sustain level
+      levels: [1, 0.5]
+      },
+
+      one: [true, false],
+      ruleOneState: 0,
+
+      four: [true, false],
+      ruleFourState: 0,
+
+      five: [true, false],
+      ruleFiveState: 0,
+
+      six: [true, false],
+      ruleSixState: 0,
+
+      playState: 0,
+
+      // duration of shortest time interval
+      ictusDur: 1/3,
+
+    },
+    mounted () {
+      // set up audio nodes
+      this.ac = new AudioContext();
+      this.oscillator = this.ac.createOscillator();
+      this.gainNode = this.ac.createGain();
+
+      // connect audio nodes
+      this.oscillator.connect(this.gainNode);
+      this.gainNode.connect(this.ac.destination);
+
+      // set parameters
+      this.gainNode.gain.setValueAtTime(0, this.now());
+
+      this.pitchCollection = [];
+
+      // start
+      this.oscillator.start(0);
+
+    },
+    methods: {
+    // get the current time
+    now () {return this.ac.currentTime},
+
+    // empties the pitchCollection array when rule one is turned on, because
+    // otherwise, in the very likely situation that the spread of notes already
+    // recorded is wider than an octave, playMelody will get stuck in an
+    // infinite loop.
+    updateRule () {this.pitchCollection.length = 0},
+
+    // the octave rule
+    ruleOne (collection) {return Math.max(...collection) - Math.min(...collection) <= 12},
+
+    // no skips of a major or minor seventh
+    ruleFour (collection) {
+      interval = Math.abs(collection[collection.length-2] - collection[collection.length-1]);
+      return (interval!=11) && (interval!=10);
+    },
+
+    // a skip must be followed by stepwise motion
+    ruleFive (collection) {
+      prevInterval = Math.abs(collection[collection.length-3] - collection[collection.length-2]);
+      if (prevInterval > 2) {
+        currentInterval = Math.abs(collection[collection.length-2] - collection[collection.length-1]);
+        return currentInterval < 3;
+      } else {return true}
+    },
+
+    // no more than one successive repeat of a given note
+    ruleSix (collection) {
+      prevInterval = Math.abs(collection[collection.length-3] - collection[collection.length-2]);
+      if (prevInterval == 0) {
+        currentInterval = Math.abs(collection[collection.length-2] - collection[collection.length-1]);
+        return currentInterval != 0;
+      } else {return true}
+    },
+
+    // toggles between play and stop
+    changePlayState () {this.playState == 0 ? this.playMelody() : this.stopMelody()},
+
+    // generates pitches according to rule based filtering of randomly generated
+    // options, and plays them back. Happens in realtime, so that it can implement
+    // rules if the users checks the rule boxes.
+    playMelody () {
+      this.playState = 1;
+      if (this.ac.state = "suspended") this.ac.resume();
+      this.timerId = setInterval(() => {
+
+        // initial pass, needs to happen once before entering the while loop,
+        // so there is something to test that first time.
+        newPitch = this.pitchTrial();
+
+        // A while loop that is only escaped from if all of the rules[state]
+        // are true. For each rule in state "0", rule[0] = true; so this
+        // only actually tests rules whose checkboxes have been checked: whose
+        // state is "1"
+        while (!(
+          this.one[Number(this.ruleOneState)] &&
+          this.four[Number(this.ruleFourState)] &&
+          this.five[Number(this.ruleFiveState)] &&
+          this.six[Number(this.ruleSixState)])) {newPitch = this.pitchTrial()};
+
+        // place newPitch in the pitchCollection array
+        this.pitchCollection.push(newPitch);
+        pc = this.pitchCollection;
+
+        // schedule the note to occur, immidiately
+        this.scheduleNote(0, ictusDur, this.mpToHz(newPitch));
+
+        // this sets the interval between sucessive runs of this function.
+      }, 1000 * ictusDur)
+    },
+
+    // generates a new pitch, tests the rules for it, and returns the pitch.
+    pitchTrial () {
+      newPitch = Math.floor(Math.random() * 108);
+      trialCollection = this.pitchCollection.concat(newPitch);
+      this.one[1] = this.ruleOne(trialCollection);
+      this.four[1] = this.ruleFour(trialCollection);
+      this.five[1] = this.ruleFive(trialCollection);
+      this.six[1] = this.ruleSix(trialCollection);
+      return newPitch;
+    },
+
+
+    // resets the playState to 0, stops the setInterval method from continuing,
+    // and clears the pitchCollection.
+    stopMelody () {
+      this.playState = 0;
+      clearInterval(this.timerId);
+      this.pitchCollection.length = 0;
+    },
+
+    // set frequency and implement adsr envelope for a single note.
+    scheduleNote (startTime, totalDur, freq) {
+      sustainDur = totalDur - this.adsr.durations.reduce((a,b) => a+b, 0);
+      attackDur = this.adsr.durations[0];
+      decayDur = this.adsr.durations[1];
+      releaseDur = this.adsr.durations[2];
+      attackLevel = this.adsr.levels[0];
+      sustainLevel = this.adsr.levels[1];
+
+      // set frequency
+      this.oscillator.frequency.setValueAtTime(freq, this.now() + startTime);
+
+      // schedule adsr envelope
+      this.gainNode.gain.linearRampToValueAtTime(0, this.now() + startTime);
+      this.gainNode.gain.linearRampToValueAtTime(attackLevel, this.now() + startTime + attackDur);
+      this.gainNode.gain.linearRampToValueAtTime(sustainLevel, this.now() + startTime + attackDur + decayDur);
+      this.gainNode.gain.linearRampToValueAtTime(sustainLevel, this.now() + startTime + attackDur + decayDur + sustainDur);
+      this.gainNode.gain.linearRampToValueAtTime(0, this.now() + startTime + totalDur);
+    },
+
+    // simple function to get frequencies from midi pitch numbers.
+    mpToHz (mp) {return tuningFrequency * 2 ** ((mp - 69) / 12)},
+
+    }
+  })
+  </script>
