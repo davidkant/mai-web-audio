@@ -10,7 +10,7 @@
     <button v-on:click="changePlayState" >{{['Play', 'Stop'][playState]}}</button>
     <p><input type="checkbox" v-model:checked="ruleOneState"
     v-on:click="updateRule"> Rule 1&mdash;"No melodic line may span more than
-    <input type='number' v-model:value='octNumber' v-on:input="updateRule" style="width:40px;"> octave(s)"</p>
+    <input type='number' min='0.25' v-model:value='octNumber' v-on:input="updateRule" style="width:40px;"> octave(s)"</p>
     <p><input type="checkbox" v-model:checked="ruleFourState"> Rule 4&mdash;"A melodic
     skip of a major or minor seventh is forbidden because this is a
     dissonant<sup>*</sup> melodic interval"</p>
@@ -219,7 +219,10 @@
         // otherwise, in the very likely situation that the spread of notes already
         // recorded is wider than an octave, playMelody will get stuck in an
         // infinite loop.
-        updateRule () {this.pitchCollection.length = 0},
+        updateRule () {
+          this.pitchCollection.length = 0;
+          this.pitchCollection.push(this.currentPitch);
+        },
 
         // the octave rule
         ruleOne (collection) {return Math.max(...collection) - Math.min(...collection) <= 12 * this.octNumber},
