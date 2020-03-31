@@ -1,0 +1,211 @@
+<html>
+<head>
+  <title>Anna's Music Box</title>
+  <!-- includes the vue framework from a CDN, rather than storing locally -->
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.6.11"></script>
+  <meta name="author" content="Jon Myers">
+</head>
+<body>
+  <div id='app'>
+    <p><button v-on:click="changePlayState" >{{['Play', 'Stop'][playState]}}</button></p>
+    <p>Pitch Center<input type="range" class="slider" min="21" max="108"
+      v-model:value="pitchCenter">{{pitchCenter}}</p>
+    <p>Pitch Deviation<input type="range" class="slider" min="0" max="48"
+        v-model:value="pitchDeviation">{{pitchDeviation}}</p>
+    <p>Pulse Duration<input type="range" class="slider" min="10" max="200"
+        v-model:value="pulseDurationSlider">{{pulseDuration}}</p>
+    <p>Rhythmic Deviation<input type="range" class="slider" min="0" max="1000"
+        v-model:value="rhythmicDeviationSlider">{{rhythmicDeviation.toFixed(2)}}</p>
+  </div>
+  <script>
+  // for cross-browser compatibility
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+
+  const tuningFrequency = 432; // because why not?
+
+  const initPulseDuration = 0.7;
+  const initRhythmicDeviation = 0;
+  const ombakDegree = 1.005; // difference in frequency between channels
+
+  const app = new Vue({
+    el: '#app',
+    data: {
+      adsr: {
+        // attack, decay, and release durations
+        durations: [0.05, 0.1, 0.05],
+        // full level and sustain level
+        levels: [1, 0.5]
+      },
+      nextNote: null,
+      currentNote: null,
+      trigger: true,
+      // note: {startTime, endTime, frequency}
+      pulseDuration: initPulseDuration,
+      pulseDurationSlider: initPulseDuration * 100,
+      rhythmicDeviation: initRhythmicDeviation, // aka, max rhythmic deviation, if implemented ala DK; could be very large or small ala JM.
+      rhythmicDeviationSlider: initRhythmicDeviation * 1000,
+
+      pitchCenter: 60,
+      pitchDeviation: 6,
+
+      playState: 0,
+
+      slackTime: 0.05,// time (in seconds) before a note begins for scheduling it
+      progressTime: 0.005,
+
+
+
+    },
+
+    mounted () {
+      // set up audio nodes
+      this.ac = new AudioContext();
+      this.oscillatorLeft = this.ac.createOscillator();
+      this.oscillatorRight = this.ac.createOscillator()
+      this.filterLeft = this.ac.createBiquadFilter();
+      this.filterRight = this.ac.createBiquadFilter();
+      this.gainNodeLeft = this.ac.createGain();
+      this.gainNodeRight = this.ac.createGain();
+      this.merger = this.ac.createChannelMerger(2);
+
+      // connect the audio nodes
+      this.oscillatorLeft.connect(this.filterLeft);
+      this.oscillatorRight.connect(this.filterRight);
+      this.filterLeft.connect(this.gainNodeLeft);
+      this.filterRight.connect(this.gainNodeRight);
+      this.gainNodeLeft.connect(this.merger, 0, 0);
+      this.gainNodeRight.connect(this.merger, 0, 1);
+      this.merger.connect(this.ac.destination);
+
+      // set initial parameters
+      this.gainNodeLeft.gain.value = 0;
+      this.gainNodeRight.gain.value = 0
+      this.oscillatorLeft.type = 'sawtooth';
+      this.oscillatorRight.type = 'sawtooth';
+      this.filterLeft.type = 'lowpass';
+      this.filterRight.type = 'lowpass';
+
+      // start
+      this.oscillatorLeft.start(0);
+      this.oscillatorRight.start(0);
+    },
+
+    updated () {
+      this.pitchCenter = Number(this.pitchCenter);
+      this.pitchDeviation = Number(this.pitchDeviation);
+      this.pulseDuration = this.pulseDurationSlider/100;
+      this.rhythmicDeviation = this.rhythmicDeviationSlider / 1000;
+    },
+
+
+    methods: {
+
+      // based on current parameter settings, make a note and set it to next note
+      makeNextNote () {
+        // if there are notes in queue, start at the last endTime. else, start now
+        startTime = Boolean(this.currentNote) ? this.currentNote.endTime : this.now() + this.slackTime;
+
+        // DK's implementation
+        // duration = pulseDuration * (Math.random() * (2 * rhythmicDeviation) + (1 - rhythmicDeviation));
+
+        // JM's implementation
+        duration = this.pulseDuration * 2 ** (Math.random() * (2 * this.rhythmicDeviation) - this.rhythmicDeviation);
+
+        endTime = startTime + duration;
+        pitch = Number(this.pitchCenter) + Math.floor(Math.random() * (2 * Number(this.pitchDeviation) + 1)) - Number(this.pitchDeviation);
+        freq = this.mpToHz(pitch);
+
+        note = {startTime: startTime, endTime: endTime, freq: freq};
+
+        // overwrite nextNote with note
+        this.nextNote = note;
+      },
+
+      // schedules nextNote, sets currentNote equal to nextNote, sets nextNote
+      // to null, and makes next NextNote
+      scheduleNextNote () {
+        note = {...this.nextNote};
+        this.playNote(note.startTime, note.endTime-note.startTime, note.freq);
+        this.currentNote = note;
+        this.nextNote = null;
+        this.makeNextNote();
+      },
+
+      // set frequency and implement adsr envelope for a single note.
+      playNote (startTime, totalDur, freq) {
+        sustainDur = totalDur - this.adsr.durations.reduce((a,b) => a+b, 0);
+        attackDur = this.adsr.durations[0];
+        decayDur = this.adsr.durations[1];
+        releaseDur = this.adsr.durations[2];
+        attackLevel = this.adsr.levels[0];
+        sustainLevel = this.adsr.levels[1];
+
+
+        // set frequency
+        this.oscillatorLeft.frequency.setValueAtTime(freq, startTime);
+        this.oscillatorRight.frequency.setValueAtTime(freq*ombakDegree, startTime);
+
+        nodes = [this.gainNodeLeft, this.gainNodeRight];
+
+        // schedule adsr envelope
+
+        nodes.forEach(node => {
+          node.gain.linearRampToValueAtTime(0, startTime);
+          node.gain.linearRampToValueAtTime(attackLevel, startTime + attackDur);
+          node.gain.linearRampToValueAtTime(sustainLevel, startTime + attackDur + decayDur);
+          node.gain.linearRampToValueAtTime(sustainLevel, startTime + attackDur + decayDur + sustainDur);
+          node.gain.linearRampToValueAtTime(0, startTime + totalDur);
+        });
+      },
+
+      // initializes a short duration setInterval object to perform scheduling,
+      // based on timing thresholds, allowing for unknown delays in js processing.
+      startProgression () {
+        this.makeNextNote();
+        if (this.ac.state === 'suspended') this.ac.resume();
+        this.progression = setInterval(() => {
+          if (this.updateNow()) this.scheduleNextNote()
+        }, this.progressTime);
+        this.playState = 1;
+      },
+
+      stopProgression () {
+        clearInterval(this.progression);
+        this.playState = 0;
+        this.currentNote = null;
+        this.nextNote = null;
+        this.trigger = true;
+      },
+
+      // test if now is a good time to update
+      updateNow () {
+        if (this.trigger) {
+          this.trigger = false;
+          return true;
+        } else {
+        return this.now() > this.currentNote.endTime - this.slackTime ? true : false
+        }
+      },
+
+      // get current time
+      now () {
+        return this.ac.currentTime
+      },
+
+      // simple function to get frequencies from midi pitch numbers.
+      // 69 is midi pitch of A4
+      mpToHz (mp) {return tuningFrequency * 2 ** ((mp - 69) / 12)},
+
+      changePlayState () {
+        Boolean(this.playState) ? this.stopProgression() : this.startProgression()
+      },
+
+
+    }
+  })
+
+
+
+
+  </script>
+</body>
