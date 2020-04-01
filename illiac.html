@@ -1,33 +1,55 @@
 <html>
+
 <head>
   <title>Illiac Suite</title>
-  <!-- includes the vue framework from a CDN, rather than storing locally -->
+  <!-- includes the vue framework from a CDN-->
   <script src="https://cdn.jsdelivr.net/npm/vue@2.6.11"></script>
   <meta name="author" content="Jon Myers">
+  <style>
+  .canvasContainer {
+    position: absolute;
+  }
+
+  #background {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 0;
+  }
+
+  #pianoRoll {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1;
+  }
+  </style>
 </head>
+
 <body style="margin:0">
   <div id="app">
-    <button v-on:click="changePlayState" >{{['Play', 'Stop'][playState]}}</button>
-    <p><input type="checkbox" v-model:checked="ruleOneState"
-    v-on:click="updateRule"> Rule 1&mdash;"No melodic line may span more than
-    <input type='number' min='0.25' v-model:value='octNumber' v-on:input="updateRule" style="width:40px;"> octave(s)"</p>
+    <button v-on:click="changePlayState">{{['Play', 'Stop'][playState]}}</button>
+    <p><input type="checkbox" v-model:checked="ruleOneState" v-on:click="updateRule"> Rule 1&mdash;"No melodic line may span more than
+      <input type='number' min='0.25' v-model:value='octNumber' v-on:input="updateRule" style="width:40px;"> octave(s)"</p>
     <p><input type="checkbox" v-model:checked="ruleFourState"> Rule 4&mdash;"A melodic
-    skip of a major or minor seventh is forbidden because this is a
-    dissonant<sup>*</sup> melodic interval"</p>
+      skip of a major or minor seventh is forbidden because this is a
+      dissonant<sup>*</sup> melodic interval"</p>
     <p><input type="checkbox" v-model:checked="ruleFiveState"> Rule 5&mdash;"Any
-    melodic skip, i.e., a melodic movement of a minor third or more, must be
-    followed by a tone repeat or by a stepwise motion with or without a change
-    in direction. A stepwise motion is a minor or major second."</p>
+      melodic skip, i.e., a melodic movement of a minor third or more, must be
+      followed by a tone repeat or by a stepwise motion with or without a change
+      in direction. A stepwise motion is a minor or major second."</p>
     <p><input type="checkbox" v-model:checked="ruleSixState">
-    Rule 6&mdash;"No more than one successive repeat of a given note is permitted."</p>
+      Rule 6&mdash;"No more than one successive repeat of a given note is permitted."</p>
     <p><sup>*</sup>According to one historical interpretation of the concept of
-    consonance/dissonance.
-    <p>Piano Roll Zoom: <input type="range" :min="zoomSliderMin"
-      :max="zoomSliderMax" v-model:value="zoomSliderValue" v-on:input="updateZoom"></p>
-    <p><canvas ref="pianoRoll" :width="canvasWidth" :height="canvasHeight"></p>
-    </div>
+      consonance/dissonance.
+      <p>Piano Roll Zoom: <input type="range" :min="zoomSliderMin" :max="zoomSliderMax" v-model:value="zoomSliderValue" v-on:input="updateZoom"></p>
+      <div class="canvasContainer">
+        <canvas id="background" ref="background" :width="canvasWidth" :height="canvasHeight"></canvas>
+        <canvas id="pianoRoll" ref="pianoRoll" :width="canvasWidth" :height="canvasHeight"></canvas>
+      </div>
+  </div>
 
-    <script>
+  <script>
     // for cross-browser compatibility
     const AudioContext = window.AudioContext || window.webkitAudioContext;
 
@@ -37,10 +59,11 @@
     const numOfOctaves = 5;
     const numOfPitches = 12 * numOfOctaves;
     const numOfWhiteKeys = 7 * numOfOctaves;
-    const bufferSize = 2**11;
+    const bufferSize = 2 ** 11;
     const colors = ['LightSalmon', 'Maroon', 'MediumSeaGreen', 'MidnightBlue',
-    'OrangeRed', 'Sienna', 'SlateGrey', 'Gold', 'Crimson', 'Black', 'DarkGreen',
-    'MediumPurple'];
+      'OrangeRed', 'Sienna', 'SlateGrey', 'Gold', 'Crimson', 'Black', 'DarkGreen',
+      'MediumPurple'
+    ];
     const zoomSliderExtent = 1000;
 
 
@@ -70,7 +93,7 @@
         playState: 0,
 
         // duration of shortest time interval
-        ictusDur: 1/3,
+        ictusDur: 1 / 3,
 
         canvasWidth: window.innerWidth,
         canvasHeight: window.innerHeight - document.querySelector('canvas').getBoundingClientRect().top,
@@ -84,10 +107,9 @@
         octNumber: 1,
 
         displayScaleFactor: 1,
-
       },
 
-      mounted () {
+      mounted() {
         // resize canvas any time window size changes
         window.addEventListener("resize", this.updateSize);
 
@@ -107,157 +129,170 @@
         this.pitchCollection = [];
 
         // set up canvas
-        this.cc = this.$refs.pianoRoll.getContext("2d");
-        this.printToCanvas();
+        this.frontCC = this.$refs.pianoRoll.getContext("2d");
+        this.backCC = this.$refs.background.getContext("2d");
 
         // start
         this.oscillator.start(0);
         this.draw();
+        this.printBackground();
 
       },
 
-      updated () {
-        this.printToCanvas();
+      updated() {
+        this.printBackground();
       },
+
       methods: {
 
-        updateZoom () {
+        updateZoom() {
           this.displayScaleFactor = 1 / (2 ** (4 * this.zoomSliderValue / this.zoomSliderMax))
         },
 
         // updates parameters if window size changes
-        updateSize () {
+        updateSize() {
           this.canvasHeight = window.innerHeight - document.querySelector('canvas').getBoundingClientRect().top;
           this.canvasWidth = window.innerWidth;
+          this.printBackground();
         },
 
         // record the current pitch to the displayBuffer
-        sample () {
+        sample() {
           value = this.currentPitch;
           // remove first element in array and add sampled value to end of array
           this.displayBuffer.shift();
           this.displayBuffer.push(value);
         },
 
-        draw () {
+        draw() {
           // continues calling back `draw` upon every time the next frame is animated
           drawVisual = requestAnimationFrame(this.draw);
           this.sample();
           this.printToCanvas();
         },
 
-
-        // reset canvas
-        printToCanvas () {
-          this.cc.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
-          keyWidth = this.canvasWidth / 12; // arbitrary
-          blackKeyHeight = this.canvasHeight / numOfPitches;
+        // reset background canvas
+        printBackground () {
+          this.keyWidth = this.canvasWidth / 12; // arbitrary
+          this.blackKeyHeight = this.canvasHeight / numOfPitches;
 
           // color the background
-          this.cc.fillStyle = backgroundColor;
-          this.cc.fillRect(0, 0, this.canvasWidth - keyWidth, this.canvasHeight);
-          this.cc.fill();
+          this.backCC.fillStyle = backgroundColor;
+          this.backCC.fillRect(0, 0, this.canvasWidth - this.keyWidth, this.canvasHeight);
+          this.backCC.fill();
 
           // draw dotted grey lines at every octave
-          octHeight = this.canvasHeight/numOfOctaves;
-          for (i=1; i<numOfOctaves; i++) {
+          octHeight = this.canvasHeight / numOfOctaves;
+          for (i = 1; i < numOfOctaves; i++) {
             octLine = new Path2D();
             octLine.moveTo(0, i * octHeight);
-            octLine.lineTo(this.canvasWidth - keyWidth, i*octHeight);
-            this.cc.setLineDash([1, 4]);
-            this.cc.strokeStyle = 'grey';
-            this.cc.stroke(octLine);
-          }
-
-          // draw the buffer to canvas
-          this.cc.setLineDash([]);
-          scaledBufferSize = Math.round(bufferSize * this.displayScaleFactor);
-          sampleWidth = (this.canvasWidth - keyWidth) / scaledBufferSize;
-          sampleHeight = this.canvasHeight / numOfPitches;
-          scaledStart = bufferSize - scaledBufferSize;
-          console.log(sampleWidth);
-          this.cc.fillStyle = 'black';
-          for (i=0; i<scaledBufferSize; i++) {
-            // console.log(((i * sampleWidth + (2/this.displayScaleFactor)) / sampleWidth));
-            // console.log(i);
-            if (this.displayBuffer[i + scaledStart] != 0) {
-              rectSlice = new Path2D();
-              rectSlice.rect(i * sampleWidth, (numOfPitches - this.displayBuffer[i + scaledStart]-1 ) * sampleHeight, 0.75/this.displayScaleFactor, blackKeyHeight);
-              this.cc.fillStyle = colors[this.displayBuffer[i+scaledStart] % 12];
-              this.cc.fill(rectSlice);
-            }
+            octLine.lineTo(this.canvasWidth - this.keyWidth, i * octHeight);
+            this.backCC.setLineDash([1, 4]);
+            this.backCC.strokeStyle = 'grey';
+            this.backCC.stroke(octLine);
           };
 
           // fill in the black keys
-          for (i=0; i < numOfPitches; i++) {
+          for (i = 0; i < numOfPitches; i++) {
             blackKey = new Path2D();
-            blackKey.rect(this.canvasWidth - keyWidth, blackKeyHeight * i, 0.67 * keyWidth, blackKeyHeight);
-            if (i%12 === 1 || i%12 === 3 || i%12 === 5 || i%12 === 8 || i%12 === 10) {
-              this.cc.fillStyle = 'black';
-              this.cc.fill(blackKey);
+            blackKey.rect(this.canvasWidth - this.keyWidth, this.blackKeyHeight * i, 0.67 * this.keyWidth, this.blackKeyHeight);
+            if (i % 12 === 1 || i % 12 === 3 || i % 12 === 5 || i % 12 === 8 || i % 12 === 10) {
+              this.backCC.fillStyle = 'black';
+              this.backCC.fill(blackKey);
             }
           };
 
           // draw the edges of the white keys
-          this.cc.setLineDash([]);
-          this.cc.strokeStyle = 'black';
+          this.backCC.setLineDash([]);
+          this.backCC.strokeStyle = 'black';
           whiteKeyHeight = this.canvasHeight / numOfWhiteKeys;
-          for (i=0; i < numOfWhiteKeys; i++) {
+          for (i = 0; i < numOfWhiteKeys; i++) {
             whiteKey = new Path2D();
-            whiteKey.rect(this.canvasWidth - keyWidth, whiteKeyHeight * i, keyWidth, whiteKeyHeight);
-            this.cc.stroke(whiteKey);
-          }
+            whiteKey.rect(this.canvasWidth - this.keyWidth, whiteKeyHeight * i, this.keyWidth, whiteKeyHeight);
+            this.backCC.stroke(whiteKey);
+          };
+        },
 
-          // this.cc.stroke(sampleLine);
+
+        // reset canvas
+        printToCanvas() {
+          this.frontCC.clearRect(0,0,this.canvasWidth, this.canvasHeight);
+
+          // draw the buffer to canvas
+          this.frontCC.setLineDash([]);
+          scaledBufferSize = Math.round(bufferSize * this.displayScaleFactor);
+          sampleWidth = (this.canvasWidth - this.keyWidth) / scaledBufferSize;
+          sampleHeight = this.canvasHeight / numOfPitches;
+          scaledStart = bufferSize - scaledBufferSize;
+          console.log(sampleWidth);
+          this.frontCC.fillStyle = 'black';
+          for (i = 0; i < scaledBufferSize; i++) {
+            if (this.displayBuffer[i + scaledStart] != 0) {
+              rectSlice = new Path2D();
+              rectSlice.rect(i * sampleWidth, (numOfPitches - this.displayBuffer[i + scaledStart] - 1) * sampleHeight, 0.75 / this.displayScaleFactor, this.blackKeyHeight);
+              this.frontCC.fillStyle = colors[this.displayBuffer[i + scaledStart] % 12];
+              this.frontCC.fill(rectSlice);
+            }
+          };
         },
 
 
         // get the current time
-        now () {return this.ac.currentTime},
+        now() {
+          return this.ac.currentTime
+        },
 
         // empties the pitchCollection array when rule one is turned on, because
         // otherwise, in the very likely situation that the spread of notes already
         // recorded is wider than an octave, playMelody will get stuck in an
         // infinite loop.
-        updateRule () {
+        updateRule() {
           this.pitchCollection.length = 0;
           this.pitchCollection.push(this.currentPitch);
         },
 
         // the octave rule
-        ruleOne (collection) {return Math.max(...collection) - Math.min(...collection) <= 12 * this.octNumber},
+        ruleOne(collection) {
+          return Math.max(...collection) - Math.min(...collection) <= 12 * this.octNumber
+        },
 
         // no skips of a major or minor seventh
-        ruleFour (collection) {
-          interval = Math.abs(collection[collection.length-2] - collection[collection.length-1]);
-          return (interval!=11) && (interval!=10);
+        ruleFour(collection) {
+          interval = Math.abs(collection[collection.length - 2] - collection[collection.length - 1]);
+          return (interval != 11) && (interval != 10);
         },
 
         // a skip must be followed by stepwise motion
-        ruleFive (collection) {
-          prevInterval = Math.abs(collection[collection.length-3] - collection[collection.length-2]);
+        ruleFive(collection) {
+          prevInterval = Math.abs(collection[collection.length - 3] - collection[collection.length - 2]);
           if (prevInterval > 2) {
-            currentInterval = Math.abs(collection[collection.length-2] - collection[collection.length-1]);
+            currentInterval = Math.abs(collection[collection.length - 2] - collection[collection.length - 1]);
             return currentInterval < 3;
-          } else {return true}
+          } else {
+            return true
+          }
         },
 
         // no more than one successive repeat of a given note
-        ruleSix (collection) {
-          prevInterval = Math.abs(collection[collection.length-3] - collection[collection.length-2]);
+        ruleSix(collection) {
+          prevInterval = Math.abs(collection[collection.length - 3] - collection[collection.length - 2]);
           if (prevInterval == 0) {
-            currentInterval = Math.abs(collection[collection.length-2] - collection[collection.length-1]);
+            currentInterval = Math.abs(collection[collection.length - 2] - collection[collection.length - 1]);
             return currentInterval != 0;
-          } else {return true}
+          } else {
+            return true
+          }
         },
 
         // toggles between play and stop
-        changePlayState () {this.playState == 0 ? this.playMelody() : this.stopMelody()},
+        changePlayState() {
+          this.playState == 0 ? this.playMelody() : this.stopMelody()
+        },
 
         // generates pitches according to rule based filtering of randomly generated
         // options, and plays them back. Happens in realtime, so that it can implement
         // rules if the users checks the rule boxes.
-        playMelody () {
+        playMelody() {
           this.playState = 1;
           if (this.ac.state = "suspended") this.ac.resume();
           this.timerId = setInterval(() => {
@@ -271,77 +306,79 @@
             // only actually tests rules whose checkboxes have been checked: whose
             // state is "1"
             while (!(
-              this.one[Number(this.ruleOneState)] &&
-              this.four[Number(this.ruleFourState)] &&
-              this.five[Number(this.ruleFiveState)] &&
-              this.six[Number(this.ruleSixState)])) {newPitch = this.pitchTrial()};
+                this.one[Number(this.ruleOneState)] &&
+                this.four[Number(this.ruleFourState)] &&
+                this.five[Number(this.ruleFiveState)] &&
+                this.six[Number(this.ruleSixState)])) {
+              newPitch = this.pitchTrial()
+            };
 
-              // place newPitch in the pitchCollection array
-              this.pitchCollection.push(newPitch);
-              pc = this.pitchCollection;
+            // place newPitch in the pitchCollection array
+            this.pitchCollection.push(newPitch);
+            pc = this.pitchCollection;
 
-              // schedule the note to occur, immidiately
-              this.scheduleNote(0, this.ictusDur, this.mpToHz(newPitch));
+            // schedule the note to occur, immidiately
+            this.scheduleNote(0, this.ictusDur, this.mpToHz(newPitch));
 
-              // sets current pitch for recording to the buffer
-              this.currentPitch = newPitch;
+            // sets current pitch for recording to the buffer
+            this.currentPitch = newPitch;
 
-              // sets interval between sucessive runs of function.
-            }, 1000 * this.ictusDur)
-          },
+            // sets interval between sucessive runs of function.
+          }, 1000 * this.ictusDur)
+        },
 
-          // generates a new pitch, tests the rules for it, and returns the pitch.
-          pitchTrial () {
-            newPitch = Math.floor(Math.random() * numOfPitches);
-            trialCollection = this.pitchCollection.concat(newPitch);
-            this.one[1] = this.ruleOne(trialCollection);
-            this.four[1] = this.ruleFour(trialCollection);
-            this.five[1] = this.ruleFive(trialCollection);
-            this.six[1] = this.ruleSix(trialCollection);
-            return newPitch;
-          },
+        // generates a new pitch, tests the rules for it, and returns the pitch.
+        pitchTrial() {
+          newPitch = Math.floor(Math.random() * numOfPitches);
+          trialCollection = this.pitchCollection.concat(newPitch);
+          this.one[1] = this.ruleOne(trialCollection);
+          this.four[1] = this.ruleFour(trialCollection);
+          this.five[1] = this.ruleFive(trialCollection);
+          this.six[1] = this.ruleSix(trialCollection);
+          return newPitch;
+        },
 
 
-          // resets the playState to 0, stops the setInterval method from continuing,
-          // and clears the pitchCollection.
-          stopMelody () {
-            this.playState = 0;
-            clearInterval(this.timerId);
-            this.pitchCollection.length = 0;
+        // resets the playState to 0, stops the setInterval method from continuing,
+        // and clears the pitchCollection.
+        stopMelody() {
+          this.playState = 0;
+          clearInterval(this.timerId);
+          this.pitchCollection.length = 0;
 
-            // for display
-            this.currentPitch = 0;
-          },
+          // for display
+          this.currentPitch = 0;
+        },
 
-          // set frequency and implement adsr envelope for a single note.
-          scheduleNote (startTime, totalDur, freq) {
-            sustainDur = totalDur - this.adsr.durations.reduce((a,b) => a+b, 0);
-            attackDur = this.adsr.durations[0];
-            decayDur = this.adsr.durations[1];
-            releaseDur = this.adsr.durations[2];
-            attackLevel = this.adsr.levels[0];
-            sustainLevel = this.adsr.levels[1];
+        // set frequency and implement adsr envelope for a single note.
+        scheduleNote(startTime, totalDur, freq) {
+          sustainDur = totalDur - this.adsr.durations.reduce((a, b) => a + b, 0);
+          attackDur = this.adsr.durations[0];
+          decayDur = this.adsr.durations[1];
+          releaseDur = this.adsr.durations[2];
+          attackLevel = this.adsr.levels[0];
+          sustainLevel = this.adsr.levels[1];
 
-            // set frequency
-            this.oscillator.frequency.setValueAtTime(freq, this.now() + startTime);
+          // set frequency
+          this.oscillator.frequency.setValueAtTime(freq, this.now() + startTime);
 
-            // schedule adsr envelope
-            this.gainNode.gain.linearRampToValueAtTime(0, this.now() + startTime);
-            this.gainNode.gain.linearRampToValueAtTime(attackLevel, this.now() + startTime + attackDur);
-            this.gainNode.gain.linearRampToValueAtTime(sustainLevel, this.now() + startTime + attackDur + decayDur);
-            this.gainNode.gain.linearRampToValueAtTime(sustainLevel, this.now() + startTime + attackDur + decayDur + sustainDur);
-            this.gainNode.gain.linearRampToValueAtTime(0, this.now() + startTime + totalDur);
-          },
+          // schedule adsr envelope
+          this.gainNode.gain.linearRampToValueAtTime(0, this.now() + startTime);
+          this.gainNode.gain.linearRampToValueAtTime(attackLevel, this.now() + startTime + attackDur);
+          this.gainNode.gain.linearRampToValueAtTime(sustainLevel, this.now() + startTime + attackDur + decayDur);
+          this.gainNode.gain.linearRampToValueAtTime(sustainLevel, this.now() + startTime + attackDur + decayDur + sustainDur);
+          this.gainNode.gain.linearRampToValueAtTime(0, this.now() + startTime + totalDur);
+        },
 
-          // simple function to get frequencies from midi pitch numbers.
-          mpToHz (mp) {return tuningFrequency * 2 ** ((mp - 21) / 12)},
+        // simple function to get frequencies from midi pitch numbers.
+        mpToHz(mp) {
+          return tuningFrequency * 2 ** ((mp - 21) / 12)
+        },
 
-        }
-      })
+      }
+    })
 
-      // __to do__
-      // - pitch chroma colors
-      // - scroll speed
-      // - dotted lines only go to key edge
-      // performance.now, instead of date.now
-      </script>
+    // __to do__
+    // performance.now, instead of date.now
+    // scheduling via double timers .......
+  </script>
