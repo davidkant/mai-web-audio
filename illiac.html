@@ -107,6 +107,13 @@
         octNumber: 1,
 
         displayScaleFactor: 1,
+
+        slackTime: 0.05,// time (in seconds) before a note begins for scheduling it
+        progressTime: 0.005,
+
+        nextNote: null,
+        currentNote: null,
+        trigger: true,
       },
 
       mounted() {
@@ -153,7 +160,7 @@
         updateSize() {
           this.canvasHeight = window.innerHeight - document.querySelector('canvas').getBoundingClientRect().top;
           this.canvasWidth = window.innerWidth;
-          this.printBackground();
+          // this.printBackground();
         },
 
         // record the current pitch to the displayBuffer
@@ -213,7 +220,6 @@
           };
         },
 
-
         // reset canvas
         printToCanvas() {
           this.frontCC.clearRect(0,0,this.canvasWidth, this.canvasHeight);
@@ -224,7 +230,6 @@
           sampleWidth = (this.canvasWidth - this.keyWidth) / scaledBufferSize;
           sampleHeight = this.canvasHeight / numOfPitches;
           scaledStart = bufferSize - scaledBufferSize;
-          console.log(sampleWidth);
           this.frontCC.fillStyle = 'black';
           for (i = 0; i < scaledBufferSize; i++) {
             if (this.displayBuffer[i + scaledStart] != 0) {
@@ -286,45 +291,7 @@
 
         // toggles between play and stop
         changePlayState() {
-          this.playState == 0 ? this.playMelody() : this.stopMelody()
-        },
-
-        // generates pitches according to rule based filtering of randomly generated
-        // options, and plays them back. Happens in realtime, so that it can implement
-        // rules if the users checks the rule boxes.
-        playMelody() {
-          this.playState = 1;
-          if (this.ac.state = "suspended") this.ac.resume();
-          this.timerId = setInterval(() => {
-
-            // initial pass, needs to happen once before entering the while loop,
-            // so there is something to test that first time.
-            newPitch = this.pitchTrial();
-
-            // A while loop that is only escaped from if all of the rules[state]
-            // are true. For each rule in state "0", rule[0] = true; so this
-            // only actually tests rules whose checkboxes have been checked: whose
-            // state is "1"
-            while (!(
-                this.one[Number(this.ruleOneState)] &&
-                this.four[Number(this.ruleFourState)] &&
-                this.five[Number(this.ruleFiveState)] &&
-                this.six[Number(this.ruleSixState)])) {
-              newPitch = this.pitchTrial()
-            };
-
-            // place newPitch in the pitchCollection array
-            this.pitchCollection.push(newPitch);
-            pc = this.pitchCollection;
-
-            // schedule the note to occur, immidiately
-            this.scheduleNote(0, this.ictusDur, this.mpToHz(newPitch));
-
-            // sets current pitch for recording to the buffer
-            this.currentPitch = newPitch;
-
-            // sets interval between sucessive runs of function.
-          }, 1000 * this.ictusDur)
+          this.playState == 0 ? this.startProgression() : this.stopProgression()
         },
 
         // generates a new pitch, tests the rules for it, and returns the pitch.
@@ -336,6 +303,90 @@
           this.five[1] = this.ruleFive(trialCollection);
           this.six[1] = this.ruleSix(trialCollection);
           return newPitch;
+        },
+
+        // return true only if all of the rules[state] are true. For each rule
+        // in state "0", rule[0] = true; so this only actually tests rules whose
+        // checkboxes have been checked: whose state is "1"
+        rulesRemainUnsatisfied () {
+          bool = !(this.one[Number(this.ruleOneState)] &&
+            this.four[Number(this.ruleFourState)] &&
+            this.five[Number(this.ruleFiveState)] &&
+            this.six[Number(this.ruleSixState)]);
+          return bool;
+        },
+
+        // based on current parameter settings, make a note and set it to next note
+        makeNextNote () {
+
+          // if there are notes in queue, start at the last endTime. else, start now
+          startTime = Boolean(this.currentNote) ? this.currentNote.endTime : this.now() + this.slackTime;
+          duration = this.ictusDur;
+          endTime = startTime + duration;
+
+          newPitch = this.pitchTrial(); // initializes trial ahead of while loop
+          while (this.rulesRemainUnsatisfied()) {
+            newPitch = this.pitchTrial()
+          };
+
+          // place newPitch in the pitchCollection array
+          this.pitchCollection.push(newPitch);
+          pc = this.pitchCollection;
+
+          freq = this.mpToHz(newPitch);
+
+          note = {startTime: startTime, endTime: endTime, freq: freq, pitch: newPitch};
+
+          // overwrite nextNote with note
+          this.nextNote = note;
+        },
+
+        // schedules nextNote, sets currentNote equal to nextNote, sets nextNote
+        // to null, and makes next NextNote
+        scheduleNextNote () {
+          note = {...this.nextNote};
+          this.playNote(note.startTime, note.endTime-note.startTime, note.freq);
+          this.currentNote = note;
+          this.nextNote = null;
+          this.makeNextNote();
+          // set current pitch as close to actual starting time as possible
+          setTimeout(() => {
+            this.currentPitch = note.pitch
+          }, note.startTime - this.now());
+        },
+
+        // initializes a short duration setInterval object to perform scheduling,
+        // based on timing thresholds, allowing for unknown delays in js processing.
+        startProgression () {
+          this.makeNextNote();
+          if (this.ac.state === 'suspended') this.ac.resume();
+          this.progression = setInterval(() => {
+            if (this.updateNow()) this.scheduleNextNote()
+          }, this.progressTime);
+          this.playState = 1;
+        },
+
+        // stops the setInterval, and resets all the relevent values
+        stopProgression () {
+          clearInterval(this.progression);
+          this.playState = 0;
+          this.currentNote = null;
+          this.nextNote = null;
+          this.trigger = true;
+          this.pitchCollection.length = 0;
+
+          // for display
+          this.currentPitch = 0
+        },
+
+        // test if now is a good time to schedule the next note
+        updateNow () {
+          if (this.trigger) {
+            this.trigger = false;
+            return true;
+          } else {
+          return this.now() > this.currentNote.endTime - this.slackTime ? true : false
+          }
         },
 
 
@@ -351,7 +402,7 @@
         },
 
         // set frequency and implement adsr envelope for a single note.
-        scheduleNote(startTime, totalDur, freq) {
+        playNote(startTime, totalDur, freq) {
           sustainDur = totalDur - this.adsr.durations.reduce((a, b) => a + b, 0);
           attackDur = this.adsr.durations[0];
           decayDur = this.adsr.durations[1];
@@ -360,14 +411,14 @@
           sustainLevel = this.adsr.levels[1];
 
           // set frequency
-          this.oscillator.frequency.setValueAtTime(freq, this.now() + startTime);
+          this.oscillator.frequency.setValueAtTime(freq, startTime);
 
           // schedule adsr envelope
-          this.gainNode.gain.linearRampToValueAtTime(0, this.now() + startTime);
-          this.gainNode.gain.linearRampToValueAtTime(attackLevel, this.now() + startTime + attackDur);
-          this.gainNode.gain.linearRampToValueAtTime(sustainLevel, this.now() + startTime + attackDur + decayDur);
-          this.gainNode.gain.linearRampToValueAtTime(sustainLevel, this.now() + startTime + attackDur + decayDur + sustainDur);
-          this.gainNode.gain.linearRampToValueAtTime(0, this.now() + startTime + totalDur);
+          this.gainNode.gain.linearRampToValueAtTime(0, startTime);
+          this.gainNode.gain.linearRampToValueAtTime(attackLevel, startTime + attackDur);
+          this.gainNode.gain.linearRampToValueAtTime(sustainLevel, startTime + attackDur + decayDur);
+          this.gainNode.gain.linearRampToValueAtTime(sustainLevel, startTime + attackDur + decayDur + sustainDur);
+          this.gainNode.gain.linearRampToValueAtTime(0, startTime + totalDur);
         },
 
         // simple function to get frequencies from midi pitch numbers.
