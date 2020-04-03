@@ -159,6 +159,7 @@
         this.oscillator.start(0);
         this.draw();
         this.printBackground();
+        this.makeNextNote();
 
       },
 
@@ -349,9 +350,9 @@
             newPitch = this.pitchTrial()
           };
 
-          // place newPitch in the pitchCollection array
-          this.pitchCollection.push(newPitch);
-          pc = this.pitchCollection;
+          // place newPitch in the pitchCollection array, close to start time
+          setTimeout(() => this.pitchCollection.push(newPitch), 1000*(startTime - this.now()))
+          // this.pitchCollection.push(newPitch);
 
           freq = this.mpToHz(newPitch);
 
@@ -370,16 +371,16 @@
           this.nextNote = null;
           this.makeNextNote();
           // set current pitch as close to actual starting time as possible
-          setTimeout(() => {
-            this.currentPitch = this.pitchCollection.slice(-1)[0];
-          }, note.startTime - this.now());
+          delay = note.startTime - this.now();
+          console.log(delay);
+          this.currentPitch = this.pitchCollection.slice(-1)[0];
         },
 
         // initializes a short duration setInterval object to perform scheduling,
         // based on timing thresholds, allowing for unknown delays in js processing.
         startProgression () {
-          this.makeNextNote();
           if (this.ac.state === 'suspended') this.ac.resume();
+          this.makeNextNote();
           this.progression = setInterval(() => {
             if (this.updateNow()) this.scheduleNextNote()
           }, this.progressTime);
