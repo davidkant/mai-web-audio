@@ -107,6 +107,7 @@
         canvasHeight: window.innerHeight - document.querySelector('canvas').getBoundingClientRect().top,
 
         displayBuffer: Array(bufferSize),
+        prevDisplayBuffer: Array(bufferSize),
 
         zoomSliderValue: 0,
         zoomSliderMin: 0,
@@ -165,6 +166,8 @@
 
       updated() {
         this.printBackground();
+        this.printFrontToCanvas();
+        console.log('updated');
       },
 
       methods: {
@@ -187,7 +190,11 @@
         // record the current pitch to the displayBuffer
         sample() {
           value = this.currentPitch - lowestPitch;
-          // remove first element in array and add sampled value to end of array
+
+          //copy display buffer to prev display buffer, for animation
+          this.prevDisplayBuffer = [...this.displayBuffer];
+
+          // remove first element in displayBuffer and add sampled value to end of array
           this.displayBuffer.shift();
           this.displayBuffer.push(value);
         },
@@ -196,7 +203,8 @@
           // continues calling back `draw` upon every time the next frame is animated
           drawVisual = requestAnimationFrame(this.draw);
           this.sample();
-          this.printToCanvas();
+          // this.printFrontToCanvas();
+          this.updateFrontToCanvas();
         },
 
         // reset background canvas
@@ -241,17 +249,15 @@
           };
         },
 
-        // reset canvas
-        printToCanvas() {
+        // reset canvas front from scratch
+        printFrontToCanvas() {
           this.frontCC.clearRect(0,0,this.canvasWidth, this.canvasHeight);
 
           // draw the buffer to canvas
-          this.frontCC.setLineDash([]);
           scaledBufferSize = Math.round(bufferSize * this.displayScaleFactor);
           sampleWidth = (this.canvasWidth - this.keyWidth) / scaledBufferSize;
           sampleHeight = this.canvasHeight / numOfPitches;
           scaledStart = bufferSize - scaledBufferSize;
-          this.frontCC.fillStyle = 'black';
           for (i = 0; i < scaledBufferSize; i++) {
             if (this.displayBuffer[i + scaledStart] != 0) {
               rectSlice = new Path2D();
@@ -260,6 +266,24 @@
               this.frontCC.fill(rectSlice);
             }
           };
+        },
+
+        // only update the items in display buffer that have changed
+        updateFrontToCanvas () {
+          scaledBufferSize = Math.round(bufferSize * this.displayScaleFactor);
+          sampleWidth = (this.canvasWidth - this.keyWidth) / scaledBufferSize;
+          sampleHeight = this.canvasHeight / numOfPitches;
+          scaledStart = bufferSize - scaledBufferSize;
+          for (i = 0; i < scaledBufferSize; i++) {
+            if (this.displayBuffer[i + scaledStart] != this.prevDisplayBuffer[i + scaledStart]) {
+              this.frontCC.clearRect((i-1) * sampleWidth, (numOfPitches - this.prevDisplayBuffer[i + scaledStart] - 1) * sampleHeight - 1, 2 / this.displayScaleFactor, this.blackKeyHeight + 2);
+              rectSlice = new Path2D();
+              rectSlice.rect(i * sampleWidth, (numOfPitches - this.displayBuffer[i + scaledStart] - 1) * sampleHeight, 1 / this.displayScaleFactor, this.blackKeyHeight);
+              this.frontCC.fillStyle = colors[this.displayBuffer[i + scaledStart] % 12];
+              this.frontCC.fill(rectSlice);
+            }
+          };
+
         },
 
 
@@ -344,19 +368,15 @@
           startTime = Boolean(this.currentNote) ? this.currentNote.endTime : this.now() + this.slackTime;
           duration = this.ictusDur;
           endTime = startTime + duration;
-
           newPitch = this.pitchTrial(); // initializes trial ahead of while loop
           while (this.rulesRemainUnsatisfied()) {
             newPitch = this.pitchTrial()
           };
+          freq = this.mpToHz(newPitch);
+          note = {startTime: startTime, endTime: endTime, freq: freq, pitch: newPitch};
 
           // place newPitch in the pitchCollection array, close to start time
           setTimeout(() => this.pitchCollection.push(newPitch), 1000*(startTime - this.now()))
-          // this.pitchCollection.push(newPitch);
-
-          freq = this.mpToHz(newPitch);
-
-          note = {startTime: startTime, endTime: endTime, freq: freq, pitch: newPitch};
 
           // overwrite nextNote with note
           this.nextNote = note;
@@ -372,7 +392,6 @@
           this.makeNextNote();
           // set current pitch as close to actual starting time as possible
           delay = note.startTime - this.now();
-          console.log(delay);
           this.currentPitch = this.pitchCollection.slice(-1)[0];
         },
 
@@ -434,7 +453,6 @@
           // set frequencies
           this.oscillator.frequency.setValueAtTime(freq, startTime);
           this.filter.frequency.setValueAtTime(freq*1.5, startTime);
-
 
           // schedule adsr envelope
           this.gainNode.gain.linearRampToValueAtTime(noiseFloor, startTime);
