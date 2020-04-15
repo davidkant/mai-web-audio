@@ -1,0 +1,314 @@
+<html>
+
+<head>
+  <title>Anna's Music Box</title>
+  <!-- includes the vue framework from a CDN, rather than storing locally -->
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.6.11"></script>
+  <style>
+
+  body {
+    margin: 0;
+  }
+
+  div {
+    border: 1px solid black;
+    padding: 8px;
+    width: 275px;
+  }
+
+  </style>
+  <meta name="author" content="Jon Myers">
+</head>
+
+<body>
+  <div id='app'>
+    <!-- <h1>Anna's Music Box (By Larry Polanksy)</h1> -->
+    <p>
+      <button v-on:click="changePlayState">{{['Play', 'Stop'][playState]}}</button>
+      <button v-on:click="setNewVoice">get new voice</button>
+    </p>
+    <p>Pitch Center: <input type="range" class="slider" min="21" max="108" v-model:value="pitchCenter">{{pitchCenter}}</p>
+    <p>Pitch Deviation: <input type="range" class="slider" min="0" max="48" v-model:value="pitchDeviation">{{pitchDeviation}}</p>
+    <p>Pulse Duration: <input type="range" class="slider" min="10" max="100" v-model:value="pulseDurationSlider">{{pulseDuration}}</p>
+    <p>Rhythm: <input type="range" class="slider" min="0" max="1000" v-model:value="rhythmicDeviationSlider">{{rhythmicDeviation.toFixed(2)}}</p>
+    <p>Detune: <input type="range" class="slider" min="0" max="1" step="0.01" v-model:value="detuneValue">{{detuneValue}}</p>
+    <p>Repeat: <input type="range" class="slider" min="0" max="1" step="0.01" v-model:value="repeat">{{repeat}}</p>
+    <p>Memory: <input type="range" class="slider" min="0" max="18" step="1" v-model:value="memory">{{memory}}</p>
+    <p>Volume: <input type="range" class="slider" min="0" max="1" step=".001" v-model:value="amp">{{amp}}</p>
+    <p>Mood: <select v-model="sieve">
+      <option v-for="option in sieveOptions">{{ option }}</option>
+    </select></p>
+  </div>
+
+
+  <script>
+    // for cross-browser compatibility
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+
+    // Check for the various File API support.
+    if (!(window.File && window.FileReader && window.FileList && window.Blob)) {
+      alert('The File APIs are not fully supported in this browser.');
+    };
+
+    const tuningFrequency = 432; // because why not?
+    const initPulseDuration = 0.2;
+    const initRhythmicDeviation = 0.5;
+    const bitDepth = 16;
+    const noiseFloor = 2 ** -bitDepth;
+    const initAmp = 1;
+
+    // all this gets the wave tables
+    const loadJSON = (path, callback, fileName) => {
+      var xobj = new XMLHttpRequest();
+      xobj.overrideMimeType("application/json");
+      xobj.open('GET', path, true);
+      xobj.onreadystatechange = function() {
+        if (xobj.readyState == 4 && xobj.status == "200") {
+          callback(xobj.responseText, fileName);
+        }
+      };
+      xobj.send(null);
+    };
+
+    const assignJSON = (response, fileName) => {
+      var tempObject = fileName;
+      this[tempObject] = JSON.parse(response);
+    };
+
+    const fileNames = ["_09_Dropped_Saw", "Buzzy_2", "Organ_2", "Dissonant_1",
+    "Wurlitzer_2", "Bass_Amp360", "Phoneme_pop_ahhhs", "Piano",
+    "Bass_Sub_Dub_2", "Bass_Fuzz", "Organ_3", "Chorus_Strings", "_05_Pulse",
+    "Dissonant_Piano", "Guitar_Fuzz", "Trombone", "_01_Saw", "Ethnic_33",
+    "Phoneme_ah", "Putney_Wavering", "Twelve_OpTines", "Harsh", "_02_Triangle",
+    "Mkl_Hard", "Twelve_String_Guitar_1", "_07_Warm_Triangle", "Dyna_EP_Bright",
+    "_11_TB303_Square", "_10_Dropped_Square", "_03_Square", "Full_2", "Brass",
+    "Bass", "Dyna_EP_Med", "Phoneme_o", "Dissonant_2", "Buzzy_1", "Wurlitzer",
+    "Throaty", "Phoneme_ooh", "Bass_Fuzz_ 2", "Brit_Blues", "_04_Noise",
+    "Phoneme_bah", "Phoneme_ee", "Brit_Blues_Driven", "_08_Warm_Square",
+    "Full_1", "_06_Warm_Saw", "Celeste", "Bass_Sub_Dub"];
+
+    // gets all the wave-tables as objects that can be called by their filename
+    fileNames.forEach(fn => {
+      loadJSON('wave-tables/'+fn, assignJSON, fn)
+    });
+
+    async function assignWaveTable() {
+      console.log('starting');
+      const waveTable = window[fileNames[Math.floor(fileNames.length * Math.random())]];
+    }
+
+    // the vue instance
+    const app = new Vue({
+      el: '#app',
+      data: {
+        adsr: {
+          // attack, decay, and release durations
+          durations: [0.03, 0.03, 0.01],
+          // full level and sustain level
+          levels: [1, 0.5]
+        },
+        nextNote: null,
+        currentNote: null,
+        trigger: true,
+        // note: {startTime, endTime, frequency}
+        pulseDuration: initPulseDuration,
+        pulseDurationSlider: initPulseDuration * 100,
+        rhythmicDeviation: initRhythmicDeviation, // aka, max rhythmic deviation, if implemented ala DK; could be very large or small ala JM.
+        rhythmicDeviationSlider: initRhythmicDeviation * 1000,
+
+        pitchCenter: 60,
+        pitchDeviation: 18,
+
+        playState: 0,
+
+        slackTime: 0.05, // time (in seconds) before a note begins for scheduling it
+        progressTime: 0.005,
+
+        detuneValue: 0,
+
+        repeat: 0,
+        memory: 0,
+        amp: initAmp,
+
+        noteCollection: [],
+
+        waveTableName: "none yet",
+        sieveOptions: ['chromatic', 'major', 'minor', 'pentatonic', 'minor-pentatonic','whole-tone', 'lydian', 'diminished'],
+        sieves: {
+          'chromatic': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+          'major': [0, 2, 4, 5, 7, 9, 11],
+          'minor': [0, 2, 3, 5, 7, 9, 10],
+          'pentatonic': [0, 2, 4, 7, 9],
+          'minor-pentatonic': [0, 3, 5, 7, 10],
+          'whole-tone': [0, 2, 4, 6, 8, 10],
+          'lydian': [0, 2, 4, 6, 7, 9, 11],
+          'diminished': [0, 3, 6, 9]
+        },
+        sieve: 'minor-pentatonic',
+      },
+
+      mounted() {
+        // set up audio nodes
+        this.ac = new AudioContext();
+        this.oscillator = this.ac.createOscillator();
+        this.filter = this.ac.createBiquadFilter();
+        this.gainNode = this.ac.createGain();
+
+        // connect the audio nodes
+        this.oscillator.connect(this.filter);
+        this.filter.connect(this.gainNode);
+        this.gainNode.connect(this.ac.destination);
+
+        // set initial parameters
+        this.gainNode.gain.value = 0;
+        this.oscillator.type = 'sawtooth';
+        this.filter.type = 'lowpass';
+
+        this.waveTable = window[fileNames[Math.floor(fileNames.length * Math.random())]];
+
+        // start
+        this.oscillator.start(0);
+      },
+
+      updated() {
+        this.pitchCenter = Number(this.pitchCenter);
+        this.pitchDeviation = Number(this.pitchDeviation);
+        this.pulseDuration = this.pulseDurationSlider / 100;
+        this.rhythmicDeviation = this.rhythmicDeviationSlider / 1000;
+      },
+
+
+      methods: {
+
+        // based on current parameter settings, make a note and set it to next note
+        makeNextNote() {
+
+          if (Boolean(this.memory) && (Math.random() <= this.repeat) && (this.noteCollection.length >= this.memory)) {
+            note = {
+              ...this.noteCollection[this.noteCollection.length - this.memory]
+            };
+            offset = this.currentNote.endTime - note.startTime;
+            note.startTime += offset;
+            note.endTime += offset;
+          } else {
+            // if there are notes in queue, start at the last endTime. else, start now
+            startTime = Boolean(this.currentNote) ? this.currentNote.endTime : this.now() + this.slackTime;
+            duration = this.pulseDuration * 2 ** (Math.random() * (2 * this.rhythmicDeviation) - this.rhythmicDeviation);
+            endTime = startTime + duration;
+
+            pitch = Number(this.pitchCenter) + Math.floor(Math.random() * (2 * Number(this.pitchDeviation) + 1)) - Number(this.pitchDeviation);
+            sieve = this.sieves[this.sieve];
+
+            while (!sieve.includes(pitch%12)) {
+              pitch = Number(this.pitchCenter) + Math.floor(Math.random() * (2 * Number(this.pitchDeviation) + 1)) - Number(this.pitchDeviation);
+            };
+            detuneValue = this.detuneValue * (2 * Math.random() - 1);
+            freq = this.mpToHz(pitch) * this.detune(detuneValue);
+            note = {
+              startTime: startTime,
+              endTime: endTime,
+              freq: freq
+            };
+          };
+
+          // overwrite nextNote with note
+          this.nextNote = note;
+        },
+
+        // schedules nextNote, sets currentNote equal to nextNote, sets nextNote
+        // to null, and makes next NextNote
+        scheduleNextNote() {
+          note = {
+            ...this.nextNote
+          };
+          this.noteCollection.push(note);
+          this.playNote(note.startTime, note.endTime - note.startTime, note.freq);
+          this.currentNote = note;
+          this.nextNote = null;
+          this.makeNextNote();
+        },
+
+        // set frequency and implement adsr envelope for a single note.
+        playNote(startTime, totalDur, freq) {
+          sustainDur = totalDur - this.adsr.durations.reduce((a, b) => a + b, 0);
+          attackDur = this.adsr.durations[0];
+          decayDur = this.adsr.durations[1];
+          releaseDur = this.adsr.durations[2];
+          attackLevel = this.adsr.levels[0] * this.amp;
+          sustainLevel = this.adsr.levels[1] * this.amp;
+
+          // set frequency
+          this.oscillator.frequency.setValueAtTime(freq, startTime);
+          this.filter.frequency.setValueAtTime(freq*2, startTime);
+
+          // schedule adsr envelope
+          this.gainNode.gain.linearRampToValueAtTime(noiseFloor, startTime);
+          this.gainNode.gain.linearRampToValueAtTime(attackLevel, startTime + attackDur);
+          this.gainNode.gain.linearRampToValueAtTime(sustainLevel, startTime + attackDur + decayDur);
+          this.gainNode.gain.linearRampToValueAtTime(sustainLevel, startTime + attackDur + decayDur + sustainDur);
+          this.gainNode.gain.linearRampToValueAtTime(noiseFloor, startTime + totalDur);
+        },
+
+        // initializes a short duration setInterval object to perform scheduling,
+        // based on timing thresholds, allowing for unknown delays in js processing.
+        startProgression() {
+          this.makeNextNote();
+          this.setNewVoice();
+          if (this.ac.state === 'suspended') this.ac.resume();
+          this.progression = setInterval(() => {
+            if (this.updateNow()) this.scheduleNextNote()
+          }, this.progressTime);
+          this.playState = 1;
+        },
+
+        // choose new wavetable, and set oscillator to play it
+        setNewVoice () {
+          this.waveTableName = fileNames[Math.floor(fileNames.length * Math.random())];
+          // waveTable = window[fileNames[Math.floor(fileNames.length * Math.random())]];
+          waveTable = window[this.waveTableName];
+          periodicWave = this.ac.createPeriodicWave(waveTable.real, waveTable.imag, {disableNormalization: true});
+          this.oscillator.setPeriodicWave(periodicWave);
+        },
+
+        stopProgression() {
+          clearInterval(this.progression);
+          this.playState = 0;
+          this.currentNote = null;
+          this.nextNote = null;
+          this.trigger = true;
+          this.noteCollection.length = 0;
+        },
+
+        // test if now is a good time to update
+        updateNow() {
+          if (this.trigger) {
+            this.trigger = false;
+            return true;
+          } else {
+            return this.now() > this.currentNote.endTime - this.slackTime ? true : false
+          }
+        },
+
+        // get current time
+        now() {
+          return this.ac.currentTime
+        },
+
+        // simple function to get frequencies from midi pitch numbers.
+        // 69 is midi pitch of A4
+        mpToHz(mp) {
+          return tuningFrequency * 2 ** ((mp - 69) / 12)
+        },
+
+        detune(detuneValue) {
+          return 2 ** (detuneValue / 12)
+        },
+
+        changePlayState() {
+          Boolean(this.playState) ? this.stopProgression() : this.startProgression()
+        },
+      }
+    })
+  </script>
+  <script src='./wave-tables/Saw.js'></script>
+</body>
