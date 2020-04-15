@@ -155,21 +155,27 @@
         this.oscillator = this.ac.createOscillator();
         this.filter = this.ac.createBiquadFilter();
         this.gainNode = this.ac.createGain();
-        this.pannerNode = this.ac.createPanner();
+        // safari doesn't have createStereoPanner; this is an annoying work around
+        this.pannerNode = this.ac.createStereoPanner ? this.ac.createStereoPanner() : this.ac.createPanner()
 
         // connect the audio nodes
         this.oscillator.connect(this.filter);
         this.filter.connect(this.gainNode);
         this.gainNode.connect(this.pannerNode);
         this.pannerNode.connect(this.ac.destination);
-        // this.gainNode.connect(this.ac.destination);
 
         // set initial parameters
         this.gainNode.gain.value = 0;
         this.filter.type = 'lowpass';
         this.waveTable = window[fileNames[Math.floor(fileNames.length * Math.random())]];
-        this.pannerNode.panningModel = 'equalpower';
-        this.pannerNode.setPosition(0,0,0);
+
+        // safari doesn't have createStereoPanner; this is an annoying work around
+        if (this.ac.createStereoPanner) {
+          this.pannerNode.pan.value = this.pan;
+        } else {
+          this.pannerNode.panningModel = 'equalpower';
+          this.pannerNode.setPosition(0,0,0);
+        }
 
         // start
         this.oscillator.start(0);
@@ -246,8 +252,9 @@
           this.oscillator.frequency.setValueAtTime(freq, startTime);
           this.filter.frequency.setValueAtTime(freq*2, startTime);
 
-          if (this.pannerNode.orientationX) {
-            this.pannerNode.orientationX.setValueAtTime(this.pan, startTime);
+          // safari doesn't have createStereoPanner; this is an annoying work around
+          if (this.ac.createStereoPanner) {
+            this.pannerNode.pan.setValueAtTime(this.pan, startTime)
           } else {
             this.pannerNode.setPosition(this.pan, 0, 1 - Math.abs(this.pan));
           };
