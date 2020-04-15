@@ -155,19 +155,21 @@
         this.oscillator = this.ac.createOscillator();
         this.filter = this.ac.createBiquadFilter();
         this.gainNode = this.ac.createGain();
-        this.pannerNode = this.ac.createStereoPanner();
+        this.pannerNode = this.ac.createPanner();
 
         // connect the audio nodes
         this.oscillator.connect(this.filter);
         this.filter.connect(this.gainNode);
         this.gainNode.connect(this.pannerNode);
         this.pannerNode.connect(this.ac.destination);
+        // this.gainNode.connect(this.ac.destination);
 
         // set initial parameters
         this.gainNode.gain.value = 0;
         this.filter.type = 'lowpass';
-
         this.waveTable = window[fileNames[Math.floor(fileNames.length * Math.random())]];
+        this.pannerNode.panningModel = 'equalpower';
+        this.pannerNode.setPosition(0,0,0);
 
         // start
         this.oscillator.start(0);
@@ -243,7 +245,12 @@
           // set parameters
           this.oscillator.frequency.setValueAtTime(freq, startTime);
           this.filter.frequency.setValueAtTime(freq*2, startTime);
-          this.pannerNode.pan.setValueAtTime(this.pan, startTime);
+
+          if (this.pannerNode.orientationX) {
+            this.pannerNode.orientationX.setValueAtTime(this.pan, startTime);
+          } else {
+            this.pannerNode.setPosition(this.pan, 0, 1 - Math.abs(this.pan));
+          };
 
           // schedule adsr envelope
           this.gainNode.gain.linearRampToValueAtTime(noiseFloor, startTime);
@@ -270,7 +277,8 @@
           this.waveTableName = fileNames[Math.floor(fileNames.length * Math.random())];
           // waveTable = window[fileNames[Math.floor(fileNames.length * Math.random())]];
           waveTable = window[this.waveTableName];
-          periodicWave = this.ac.createPeriodicWave(waveTable.real, waveTable.imag, {disableNormalization: true});
+          console.log(waveTable.real);
+          periodicWave = this.ac.createPeriodicWave(Float32Array.from(waveTable.real), Float32Array.from(waveTable.imag), {disableNormalization: true});
           this.oscillator.setPeriodicWave(periodicWave);
         },
 
@@ -314,5 +322,4 @@
       }
     })
   </script>
-  <script src='./wave-tables/Saw.js'></script>
 </body>
